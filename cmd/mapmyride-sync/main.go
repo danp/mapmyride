@@ -118,6 +118,9 @@ func (d *DB) sync(ctx context.Context, userName string, w mapmyride.Workout) err
 	fmt.Println("sync", userName, "workout started", w.StartedAt.Format(time.RFC3339), "named", w.Name)
 
 	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
 	defer tx.Rollback()
 
 	for _, t := range []string{"workout_steps", "workout_speeds", "workout_positions", "workout_distances"} {
