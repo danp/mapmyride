@@ -64,18 +64,19 @@ type WorkoutStep struct {
 
 // Workout is a recorded workout.
 type Workout struct {
-	ID        int
-	Name      string
-	Kind      string
-	Kcal      int
-	Distance  float64 // meters
-	Speed     float64 // meters per second
-	Duration  time.Duration
-	StepCount int
-	Gain      int // meters
-	StartedAt time.Time
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           int
+	Name         string
+	Kind         string
+	ActivityType string
+	Kcal         int
+	Distance     float64 // meters
+	Speed        float64 // meters per second
+	Duration     time.Duration
+	StepCount    int
+	Gain         int // meters
+	StartedAt    time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 
 	Distances []WorkoutDistance
 	Positions []WorkoutPosition
@@ -111,11 +112,14 @@ type Client struct {
 
 	tokenSource TokenSource
 	baseURL     string
+
+	// ID -> name
+	activityTypes map[string]string
 }
 
 // NewClient returns a new Client using the given tokenSource.
 func NewClient(tokenSource TokenSource) *Client {
-	return &Client{tokenSource: tokenSource}
+	return &Client{tokenSource: tokenSource, activityTypes: make(map[string]string)}
 }
 
 // GetWorkouts retrieves workouts with "started at" times between
@@ -196,7 +200,7 @@ func (c *Client) getMonthWorkoutsForRange(ctx context.Context, year, month int, 
 		for _, rw := range rws {
 			dt, err := time.ParseInLocation("01/02/2006", rw.Date, time.UTC)
 			if err != nil {
-				return nil, fmt.Errorf("converting %q to date: %s", rw.Date, err)
+				return nil, fmt.Errorf("converting %q to date: %w", rw.Date, err)
 			}
 
 			// Fetching dashboard for a given year and month can return
@@ -212,7 +216,7 @@ func (c *Client) getMonthWorkoutsForRange(ctx context.Context, year, month int, 
 			viewURLParts := strings.Split(rw.ViewURL, "/")
 			id, err := strconv.Atoi(viewURLParts[2])
 			if err != nil {
-				return nil, fmt.Errorf("converting %q to id: %s", rw.ViewURL, err)
+				return nil, fmt.Errorf("converting %q to id: %w", rw.ViewURL, err)
 			}
 
 			wk := Workout{
@@ -277,6 +281,9 @@ func (c *Client) fillMainData(ctx context.Context, wk *Workout) error {
 		StartedAt  time.Time                  `json:"start_datetime"`
 		UpdatedAt  time.Time                  `json:"updated_datetime"`
 		Timeseries map[string]json.RawMessage `json:"time_series"`
+		Links      map[string][]struct {
+			ID string
+		} `json:"_links"`
 	}
 
 	b, err := ioutil.ReadAll(resp.Body)
@@ -358,6 +365,19 @@ func (c *Client) fillMainData(ctx context.Context, wk *Workout) error {
 		}
 	}
 
+	if ats := rawresp.Links["activity_type"]; len(ats) == 1 {
+		atID := ats[0].ID
+		name, ok := c.activityTypes[atID]
+		if !ok {
+			name, err = c.fetchActivityTypeName(ctx, atID)
+			if err != nil {
+				return fmt.Errorf("unable to fetch activity type name for %q: %w", atID, err)
+			}
+			c.activityTypes[atID] = name
+		}
+		wk.ActivityType = name
+	}
+
 	return nil
 }
 
@@ -403,6 +423,38 @@ func (c *Client) fillGainData(ctx context.Context, wk *Workout) error {
 
 	wk.Gain = gain
 	return nil
+}
+
+func (c *Client) fetchActivityTypeName(ctx context.Context, id string) (string, error) {
+	req, err := c.newRequest(ctx, "GET", "/vxproxy/v7.0/activity_type/"+id+"/")
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := c.httpDo(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("got status %d", resp.StatusCode)
+	}
+
+	var rawresp struct {
+		Name string
+	}
+
+	b, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	if err := json.Unmarshal(b, &rawresp); err != nil {
+		return "", err
+	}
+
+	return rawresp.Name, nil
 }
 
 func (c *Client) newRequest(ctx context.Context, method, path string) (*http.Request, error) {

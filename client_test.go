@@ -17,6 +17,16 @@ import (
 func TestClientGetWorkouts(t *testing.T) {
 	refTime := time.Date(2020, 3, 10, 7, 32, 56, 0, time.Local)
 
+	runActivity := testActivityType{
+		id:   42,
+		name: "Running",
+	}
+
+	swimActivity := testActivityType{
+		id:   24,
+		name: "Swimming",
+	}
+
 	cases := []struct {
 		name       string
 		begin, end time.Time
@@ -281,6 +291,28 @@ func TestClientGetWorkouts(t *testing.T) {
 			},
 			want: []int{0},
 		},
+		{
+			name:  "SetsActivityType",
+			begin: refTime,
+			end:   refTime.Add(time.Hour),
+			tws: []testWorkout{
+				{
+					id:           1,
+					name:         "runnin",
+					kind:         "run",
+					activityType: runActivity,
+					startedAt:    refTime,
+				},
+				{
+					id:           2,
+					name:         "swimmin",
+					kind:         "swim",
+					activityType: swimActivity,
+					startedAt:    refTime,
+				},
+			},
+			want: []int{0, 1},
+		},
 	}
 
 	for _, tc := range cases {
@@ -288,6 +320,9 @@ func TestClientGetWorkouts(t *testing.T) {
 			wsrv := newWorkoutServer()
 			for _, tw := range tc.tws {
 				wsrv.addWorkout(tw)
+				if tw.activityType.id != 0 {
+					wsrv.addActivityType(tw.activityType)
+				}
 			}
 
 			srv := httptest.NewServer(wsrv)
@@ -427,6 +462,11 @@ func (t testWorkoutStep) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
+type testActivityType struct {
+	id   int
+	name string
+}
+
 type testWorkout struct {
 	id        int
 	name      string
@@ -442,6 +482,8 @@ type testWorkout struct {
 	createdAt time.Time
 	updatedAt time.Time
 
+	activityType testActivityType
+
 	distances []testWorkoutDistance
 	positions []testWorkoutPosition
 	speeds    []testWorkoutSpeed
@@ -450,17 +492,18 @@ type testWorkout struct {
 
 func (w testWorkout) toWorkout() Workout {
 	wk := Workout{
-		ID:        w.id,
-		Name:      w.name,
-		Kind:      w.kind,
-		Kcal:      w.kcal,
-		Distance:  w.distance,
-		Speed:     w.speed,
-		Gain:      w.gain,
-		Duration:  w.duration,
-		StartedAt: w.startedAt,
-		CreatedAt: w.createdAt,
-		UpdatedAt: w.updatedAt,
+		ID:           w.id,
+		Name:         w.name,
+		Kind:         w.kind,
+		ActivityType: w.activityType.name,
+		Kcal:         w.kcal,
+		Distance:     w.distance,
+		Speed:        w.speed,
+		Gain:         w.gain,
+		Duration:     w.duration,
+		StartedAt:    w.startedAt,
+		CreatedAt:    w.createdAt,
+		UpdatedAt:    w.updatedAt,
 	}
 
 	for _, p := range w.positions {
@@ -497,20 +540,27 @@ func (w testWorkout) toWorkout() Workout {
 }
 
 type workoutServer struct {
-	workouts map[int]testWorkout
-	mux      *http.ServeMux
+	activityTypes map[int]testActivityType
+	workouts      map[int]testWorkout
+	mux           *http.ServeMux
 }
 
 func newWorkoutServer() *workoutServer {
 	w := &workoutServer{
-		workouts: make(map[int]testWorkout),
-		mux:      http.NewServeMux(),
+		activityTypes: make(map[int]testActivityType),
+		workouts:      make(map[int]testWorkout),
+		mux:           http.NewServeMux(),
 	}
 
 	w.mux.HandleFunc("/workouts/dashboard.json", w.dashboardHandler)
+	w.mux.HandleFunc("/vxproxy/v7.0/activity_type/", w.apiActivityTypeHandler)
 	w.mux.HandleFunc("/vxproxy/v7.0/workout/", w.apiWorkoutHandler)
 	w.mux.HandleFunc("/workout/", w.uiWorkoutHandler)
 	return w
+}
+
+func (w *workoutServer) addActivityType(at testActivityType) {
+	w.activityTypes[at.id] = at
 }
 
 func (w *workoutServer) addWorkout(wo testWorkout) {
@@ -566,6 +616,34 @@ func (w *workoutServer) dashboardHandler(wr http.ResponseWriter, req *http.Reque
 	json.NewEncoder(wr).Encode(&resp)
 }
 
+func (w *workoutServer) apiActivityTypeHandler(wr http.ResponseWriter, req *http.Request) {
+	path := req.URL.Path
+	if path[len(path)-1] != '/' {
+		wr.WriteHeader(500)
+		return
+	}
+	path = path[:len(path)-1]
+
+	id, err := strconv.Atoi(path[strings.LastIndex(path, "/")+1:])
+	if err != nil {
+		wr.WriteHeader(500)
+		return
+	}
+
+	at, ok := w.activityTypes[id]
+	if !ok {
+		wr.WriteHeader(404)
+		return
+	}
+
+	var rawresp struct {
+		Name string `json:"name"`
+	}
+	rawresp.Name = at.name
+
+	json.NewEncoder(wr).Encode(&rawresp)
+}
+
 func (w *workoutServer) apiWorkoutHandler(wr http.ResponseWriter, req *http.Request) {
 	if req.URL.Query().Get("field_set") != "time_series" {
 		wr.WriteHeader(500)
@@ -591,11 +669,16 @@ func (w *workoutServer) apiWorkoutHandler(wr http.ResponseWriter, req *http.Requ
 		return
 	}
 
+	type link struct {
+		ID string `json:"id"`
+	}
+
 	var rawresp struct {
 		CreatedAt  time.Time              `json:"created_datetime"`
 		StartedAt  time.Time              `json:"start_datetime"`
 		UpdatedAt  time.Time              `json:"updated_datetime"`
 		Timeseries map[string]interface{} `json:"time_series"`
+		Links      map[string][]link      `json:"_links"`
 	}
 
 	rawresp.CreatedAt = wk.createdAt
@@ -622,6 +705,18 @@ func (w *workoutServer) apiWorkoutHandler(wr http.ResponseWriter, req *http.Requ
 
 	if len(ts) > 0 {
 		rawresp.Timeseries = ts
+	}
+
+	if wk.activityType.id != 0 {
+		rawresp.Links = map[string][]link{
+			"activity_type": {
+				{
+					ID: strconv.Itoa(wk.activityType.id),
+					// Real response has href with a path
+					// but we don't use that.
+				},
+			},
+		}
 	}
 
 	json.NewEncoder(wr).Encode(&rawresp)

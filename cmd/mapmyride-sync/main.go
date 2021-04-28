@@ -111,7 +111,7 @@ func newDB(filename string) (*DB, error) {
 
 func (s *DB) init() error {
 	for _, q := range []string{
-		"create table if not exists workouts (id integer primary key, user_name text not null, name text not null, kind text not null, kcal integer, distance_m numeric, speed_mps numeric, duration interval, step_count bigint, gain_m numeric, started_at datetime, created_at datetime, updated_at datetime)",
+		"create table if not exists workouts (id integer primary key, user_name text not null, name text not null, kind text not null, activity_type text, kcal integer, distance_m numeric, speed_mps numeric, duration_s integer, step_count bigint, gain_m numeric, started_at datetime, created_at datetime, updated_at datetime)",
 		"create table if not exists workout_distances (workout_id integer references workouts (id), elapsed_seconds numeric, total_meters numeric)",
 		"create table if not exists workout_positions (workout_id integer references workouts (id), elapsed_seconds numeric, elevation numeric, lat numeric, lng numeric)",
 		"create table if not exists workout_speeds (workout_id integer references workouts (id), elapsed_seconds numeric, meters_per_second numeric)",
@@ -158,8 +158,8 @@ func (d *DB) sync(ctx context.Context, userName string, w mapmyride.Workout) err
 
 	_, err = tx.ExecContext(
 		ctx,
-		"insert into workouts (id, user_name, name, kind, kcal, distance_m, speed_mps, duration, step_count, gain_m, started_at, created_at, updated_at) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
-		w.ID, userName, w.Name, w.Kind, w.Kcal, w.Distance, w.Speed, fmt.Sprintf("%d seconds", w.Duration/time.Second), w.StepCount, w.Gain, w.StartedAt, w.CreatedAt, w.UpdatedAt,
+		"insert into workouts (id, user_name, name, kind, activity_type, kcal, distance_m, speed_mps, duration_s, step_count, gain_m, started_at, created_at, updated_at) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+		w.ID, userName, w.Name, w.Kind, w.ActivityType, w.Kcal, w.Distance, w.Speed, int(w.Duration.Seconds()), w.StepCount, w.Gain, w.StartedAt, w.CreatedAt, w.UpdatedAt,
 	)
 	if err != nil {
 		return err
