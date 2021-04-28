@@ -29,26 +29,10 @@ func main() {
 	if *username == "" {
 		log.Fatal("need -username")
 	}
-	if *beginDay == "" {
-		log.Fatal("need -begin-day")
-	}
-	if *endDay == "" {
-		log.Fatal("need -end-day")
-	}
 
 	authToken := os.Getenv("AUTH_TOKEN")
 	if authToken == "" {
 		log.Fatal("need AUTH_TOKEN, which can be acquired by logging in to https://www.mapmyride.com/ and grabbing the value of the auth-token cookie")
-	}
-
-	begin, err := time.Parse("2006-01-02", *beginDay)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	end, err := time.Parse("2006-01-02", *endDay)
-	if err != nil {
-		log.Fatal(err)
 	}
 
 	db, err := newDB(*databaseFile)
@@ -57,6 +41,34 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	var begin time.Time
+	if *beginDay == "" {
+		latest, err := db.latestWorkoutStartedAt(ctx, *username)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if !latest.IsZero() {
+			// Re-sync things from 14 days before latest to account for
+			// possible edits.
+			begin = latest.AddDate(0, 0, -14)
+		}
+	} else {
+		begin, err = time.Parse("2006-01-02", *beginDay)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	end := time.Now()
+	if *endDay != "" {
+		end, err = time.Parse("2006-01-02", *endDay)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	log.Println("syncing for", *username, "from", begin.Format(time.RFC3339), "to", end.Format(time.RFC3339))
 
 	client := mapmyride.NewClient(mapmyride.StaticTokenSource(authToken))
 
@@ -114,8 +126,17 @@ func (s *DB) init() error {
 	return nil
 }
 
+func (d *DB) latestWorkoutStartedAt(ctx context.Context, userName string) (time.Time, error) {
+	row := d.db.QueryRowContext(ctx, "select date(max(started_at)) from workouts where user_name=?", userName)
+	var latests string
+	if err := row.Scan(&latests); err != nil {
+		return time.Time{}, err
+	}
+	return time.Parse("2006-01-02", latests)
+}
+
 func (d *DB) sync(ctx context.Context, userName string, w mapmyride.Workout) error {
-	fmt.Println("sync", userName, "workout started", w.StartedAt.Format(time.RFC3339), "named", w.Name)
+	log.Println("sync", userName, "workout started", w.StartedAt.Format(time.RFC3339), "named", w.Name)
 
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -207,7 +228,7 @@ func (d *DB) removeExtra(ctx context.Context, userName string, begin, end time.T
 		return err
 	}
 
-	fmt.Println("removeExtra removed", ra, "extra workouts for", userName, "started_at between", begin, "and", end, "and not ids", idss)
+	log.Println("removeExtra removed", ra, "extra workouts for", userName, "started_at between", begin, "and", end, "and not ids", idss)
 
 	return nil
 }
