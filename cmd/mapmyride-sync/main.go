@@ -135,6 +135,8 @@ func (d *DB) latestWorkoutStartedAt(ctx context.Context, userName string) (time.
 	return time.Parse("2006-01-02", latests)
 }
 
+const timeFormat = "2006-01-02 15:04:05.999999999-07:00"
+
 func (d *DB) sync(ctx context.Context, userName string, w mapmyride.Workout) error {
 	log.Println("sync", userName, "workout started", w.StartedAt.Format(time.RFC3339), "named", w.Name)
 
@@ -159,7 +161,9 @@ func (d *DB) sync(ctx context.Context, userName string, w mapmyride.Workout) err
 	_, err = tx.ExecContext(
 		ctx,
 		"insert into workouts (id, user_name, name, kind, activity_type, kcal, distance_m, speed_mps, duration_s, step_count, gain_m, started_at, created_at, updated_at) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
-		w.ID, userName, w.Name, w.Kind, w.ActivityType, w.Kcal, w.Distance, w.Speed, int(w.Duration.Seconds()), w.StepCount, w.Gain, w.StartedAt, w.CreatedAt, w.UpdatedAt,
+		w.ID, userName, w.Name, w.Kind, w.ActivityType, w.Kcal, w.Distance, w.Speed,
+		int(w.Duration.Seconds()), w.StepCount, w.Gain,
+		w.StartedAt.Format(timeFormat), w.CreatedAt.Format(timeFormat), w.UpdatedAt.Format(timeFormat),
 	)
 	if err != nil {
 		return err
