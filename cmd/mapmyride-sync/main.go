@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/danp/mapmyride"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/peterbourgon/ff"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -95,7 +95,7 @@ type DB struct {
 }
 
 func newDB(filename string) (*DB, error) {
-	db, err := sql.Open("sqlite3", filename)
+	db, err := sql.Open("sqlite", filename)
 	if err != nil {
 		return nil, fmt.Errorf("opening database file %q: %w", filename, err)
 	}
